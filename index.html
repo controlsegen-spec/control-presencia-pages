@@ -1053,6 +1053,25 @@ window.addEventListener('pointerup',()=>{
 window.addEventListener('pointercancel',()=>{monthlyDrag=null;});
 // Los mapas visibles se actualizan al consultar cada mes; no se modifica Firestore.
 let monthlyVisibleSituations=new Map(),monthlyVisibleAttendance=new Set(),monthlyVisibleGuards=new Set(),monthlyVisibleAdminAttendance=new Set();
+
+// V6.15.30: separar confirmación de escritura y actualización visual.
+// Solo se confirma la operación cuando Firestore termina correctamente.
+function beginMonthlySave(message){
+ const button=$('monthlyStateSave');
+ button.disabled=true;
+ $('monthlyStateMessage').textContent=message;
+ const slowTimer=setTimeout(()=>{
+  if(button.disabled)$('monthlyStateMessage').textContent='Firebase está tardando en confirmar. No vuelvas a pulsar Guardar: comprueba el resultado antes de repetir la operación.';
+ },10000);
+ return ()=>{clearTimeout(slowTimer);button.disabled=false;};
+}
+function finishMonthlySave(message){
+ // La operación ya está confirmada: la consulta del calendario no bloquea el guardado.
+ closeMonthlyStateEditor();
+ $('monthlyStatus').textContent=message+' Actualizando la vista…';
+ void refreshMonthly(message);
+}
+
 $('monthlyStateSave').addEventListener('click',async()=>{
  if(!monthlySelectedState||!adminReady||!auth.currentUser)return;
 
@@ -1061,8 +1080,7 @@ $('monthlyStateSave').addEventListener('click',async()=>{
   if(!MONTHLY_BATCH_TYPES.has(type))return $('monthlyStateMessage').textContent='Esta situación debe asignarse día a día. La selección múltiple solo permite permisos, comisiones, bajas y otras situaciones administrativas sin saldo.';
   const datesToSave=[...monthlySelectedDates].sort();
   if(!confirm('¿Aplicar «'+(SITUATION_LABELS[type]||type)+'» a '+person.fullName+' en '+datesToSave.length+' días?'))return;
-  const button=$('monthlyStateSave');button.disabled=true;
-  $('monthlyStateMessage').textContent='Comprobando las fechas antes de guardar…';
+  const endSave=beginMonthlySave('Comprobando las fechas antes de guardar…');
   try{
    const refs=datesToSave.map(d=>({date:d,sit:doc(db,'presenceSituations',person.id+'_'+d),attendance:doc(db,'attendance',person.id+'_'+d),guard:doc(db,'guardDuties',person.id+'_'+d)}));
    // La transacción valida el conjunto completo antes de modificar ningún día.
@@ -1075,10 +1093,9 @@ $('monthlyStateSave').addEventListener('click',async()=>{
     }
     for(const d of docs)tx.set(d.ref,{userId:person.id,workDate:d.date,type,updatedBy:auth.currentUser.uid,updatedAt:serverTimestamp()});
    });
-   closeMonthlyStateEditor();await refreshMonthly();
-   $('monthlyStatus').textContent='Situación guardada para '+datesToSave.length+' días. No se han modificado guardias ni saldos.';
+   finishMonthlySave('Situación guardada para '+datesToSave.length+' días. No se han modificado guardias ni saldos.');
   }catch(err){$('monthlyStateMessage').textContent='No se pudo guardar ninguna fecha: '+(err.code||err.message);}
-  finally{button.disabled=false;}
+  finally{endSave();}
   return;
  }
  const {person,date,present,guard,existingType,adminPresent}=monthlySelectedState,type=$('monthlyStateType').value;
@@ -1089,7 +1106,7 @@ $('monthlyStateSave').addEventListener('click',async()=>{
   if(!Number.isInteger(grantQuantity)||grantQuantity<1||grantQuantity>365)return $('monthlyStateMessage').textContent='Introduce entre 1 y 365 días.';
   if(!grantReason||grantReason.length>120)return $('monthlyStateMessage').textContent='Indica el motivo de la concesión (máximo 120 caracteres).';
   if(!confirm('¿Conceder '+grantQuantity+' día(s) graciable(s) a '+(person.fullName||person.email)+' con fecha '+date.split('-').reverse().join('/')+'?'))return;
-  const button=$('monthlyStateSave');button.disabled=true;$('monthlyStateMessage').textContent='Registrando concesión en Firebase…';
+  const endSave=beginMonthlySave('Registrando concesión en Firebase…');
   try{
    const ref=doc(db,'graciousDays',person.id+'_'+date);
    await runTransaction(db,async tx=>{
@@ -1097,10 +1114,9 @@ $('monthlyStateSave').addEventListener('click',async()=>{
     if(previous.exists())throw Error('Ya existe una concesión en esa fecha para este trabajador. Consulta el historial de movimientos.');
     tx.set(ref,{userId:person.id,workDate:date,note:grantReason,quantity:grantQuantity,recordedBy:auth.currentUser.uid,recordedAt:serverTimestamp()});
    });
-   closeMonthlyStateEditor();await refreshMonthly();
-   $('monthlyStatus').textContent='Concesión registrada: +'+grantQuantity+' día(s) graciable(s). Saldo e historial actualizados.';
+   finishMonthlySave('Concesión registrada: +'+grantQuantity+' día(s) graciable(s).');
   }catch(err){$('monthlyStateMessage').textContent='No se pudo conceder: '+(err.code||err.message)+'. Verifica el historial antes de repetir.';}
-  finally{button.disabled=false;}
+  finally{endSave();}
   return;
  }
  
@@ -1112,7 +1128,7 @@ $('monthlyStateSave').addEventListener('click',async()=>{
  }
  if(type==='guardia'&&guard&&(!existingType||present))return $('monthlyStateMessage').textContent='La guardia ya está registrada para esta fecha.';
  if(!confirm('¿Guardar «'+(type==='guardia'?'Guardia':type==='presente_manual'?'Presente (registro manual)':type?SITUATION_LABELS[type]||type:'Sin registro')+'» para '+(person.fullName||person.email)+' el '+date.split('-').reverse().join('/')+'?'))return;
- const button=$('monthlyStateSave');button.disabled=true;$('monthlyStateMessage').textContent='Guardando y comprobando el saldo…';
+ const endSave=beginMonthlySave('Guardando y comprobando los datos del día…');
  try{
   const uid=person.id,refId=uid+'_'+date,guardRef=doc(db,'guardDuties',refId),sitRef=doc(db,'presenceSituations',refId),attRef=doc(db,'attendance',refId);
   if(type==='presente_manual'){
@@ -1126,30 +1142,40 @@ $('monthlyStateSave').addEventListener('click',async()=>{
     if(s.exists())tx.delete(sitRef);
     tx.set(attRef,{userId:uid,departmentId:person.departmentId,workDate:date,checkedAt:serverTimestamp(),source:'admin',recordedBy:auth.currentUser.uid,recordedAt:serverTimestamp(),reason:manualNote});
    });
-   closeMonthlyStateEditor();
-   await refreshMonthly();
-   $('monthlyStatus').textContent='Presencia manual guardada con identificación de administración registrada.';
+   finishMonthlySave('Presencia manual guardada con identificación del administrador.');
    return;
   }
-  // Leer el histórico completo: el saldo se acumula entre años.
-  const [allGuards,allSituations,allGrants]=await Promise.all([getDocs(collection(db,'guardDuties')),getDocs(collection(db,'presenceSituations')),getDocs(collection(db,'graciousDays'))]);
-  const earned=allGuards.docs.filter(d=>d.data().userId===uid).length;
-  const used=allSituations.docs.filter(d=>d.data().userId===uid&&d.data().type==='saliente_guardia').length;
-  const grants=allGrants.docs.filter(d=>d.data().userId===uid).reduce((sum,d)=>sum+(Number(d.data().quantity)||0),0);
-  const enjoyed=allSituations.docs.filter(d=>d.data().userId===uid&&d.data().type==='dia_agraciable').length;
+  // Para permisos, bajas y comisiones no hace falta consultar todos los históricos.
+  // Solo comprobar saldos cuando el cambio pueda crear, retirar o consumir días.
+  const needsBalance=type==='guardia'||type==='saliente_guardia'||type==='dia_agraciable'||guard||existingType==='saliente_guardia'||existingType==='dia_agraciable';
+  let earned=0,used=0,grants=0,enjoyed=0;
+  if(needsBalance){
+   $('monthlyStateMessage').textContent='Comprobando el saldo de guardias y graciables…';
+   const [allGuards,allSituations,allGrants]=await Promise.all([
+    getDocs(query(collection(db,'guardDuties'),where('userId','==',uid))),
+    getDocs(query(collection(db,'presenceSituations'),where('userId','==',uid))),
+    getDocs(query(collection(db,'graciousDays'),where('userId','==',uid)))
+   ]);
+   earned=allGuards.size;
+   used=allSituations.docs.filter(d=>d.data().type==='saliente_guardia').length;
+   grants=allGrants.docs.reduce((sum,d)=>sum+(Number(d.data().quantity)||0),0);
+   enjoyed=allSituations.docs.filter(d=>d.data().type==='dia_agraciable').length;
+  }
   await runTransaction(db,async tx=>{
    const [g,s,a]=await Promise.all([tx.get(guardRef),tx.get(sitRef),tx.get(attRef)]);
    const hasGuard=g.exists(),oldType=s.exists()?s.data().type:null;
+   if(!needsBalance&&(hasGuard||oldType==='saliente_guardia'||oldType==='dia_agraciable'))
+    throw Error('La situación o guardia ha cambiado desde que abriste el calendario. Actualízalo antes de editar.');
    if(a.exists()&&a.data().source!=='admin'&&type!=='guardia')throw Error('Existe un fichaje del trabajador que no puede cambiarse desde administración.');
    if(type==='guardia'&&hasGuard&&(!oldType||a.exists()))throw Error('La guardia ya está registrada.');
    const willRemoveGuard=hasGuard&&type!=='guardia';
    const willRemoveUsedExit=oldType==='saliente_guardia'&&type!=='saliente_guardia';
    const willAddUsedExit=type==='saliente_guardia'&&oldType!=='saliente_guardia';
    const finalBalance=earned-(willRemoveGuard?1:0)-used+(willRemoveUsedExit?1:0)-(willAddUsedExit?1:0)+(type==='guardia'&&!hasGuard?1:0);
-   if(finalBalance<0)throw Error('No se puede anular esta guardia o consumir un saliente: no quedaría saldo suficiente.');
+   if(needsBalance&&finalBalance<0)throw Error('No se puede anular esta guardia o consumir un saliente: no quedaría saldo suficiente.');
    const removeGracious=oldType==='dia_agraciable'&&type!=='dia_agraciable';
    const addGracious=type==='dia_agraciable'&&oldType!=='dia_agraciable';
-   if(grants-enjoyed+(removeGracious?1:0)-(addGracious?1:0)<0)throw Error('No hay saldo suficiente de días graciables.');
+   if(needsBalance&&grants-enjoyed+(removeGracious?1:0)-(addGracious?1:0)<0)throw Error('No hay saldo suficiente de días graciables.');
    if(a.exists()&&a.data().source==='admin'&&type!=='guardia')tx.delete(attRef);
    if(willRemoveGuard)tx.delete(guardRef);
    if(type==='guardia'){
@@ -1159,11 +1185,9 @@ $('monthlyStateSave').addEventListener('click',async()=>{
     tx.set(sitRef,{userId:uid,workDate:date,type,updatedBy:auth.currentUser.uid,updatedAt:serverTimestamp()});
    }else if(s.exists())tx.delete(sitRef);
   });
-  closeMonthlyStateEditor();
-  await refreshMonthly();
-  $('monthlyStatus').textContent='Estado guardado correctamente. Los saldos se actualizan también en Consulta de días.';
+  finishMonthlySave('Estado guardado correctamente. Los saldos se actualizan también en Consulta de días.');
  }catch(err){$('monthlyStateMessage').textContent='No se pudo guardar: '+(err.code||err.message)+'. Comprueba el historial antes de reintentar.';}
- finally{button.disabled=false;}
+ finally{endSave();}
 });
 function monthlyStatusInfo(type,present,guard){
  if(present&&guard)return ['P/G','Presente / Guardia','monthly-combined'];
@@ -1176,7 +1200,8 @@ function monthlyStatusInfo(type,present,guard){
  if(guard)return ['G','Guardia','monthly-guard'];
  return ['—','Sin registro','monthly-missing'];
 }
-async function refreshMonthly(){
+async function refreshMonthly(confirmedSaveMessage=null){
+ confirmedSaveMessage=typeof confirmedSaveMessage==='string'?confirmedSaveMessage:null;
  if(!adminReady||currentSection!=='monthly')return;
  const month=$('monthlyMonth').value;
  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)){$('monthlyStatus').textContent='Selecciona un mes válido.';return}
@@ -1184,7 +1209,7 @@ async function refreshMonthly(){
  if(monthlySelectedState)closeMonthlyStateEditor();
  const days=new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5,7)),0)).getUTCDate();
  const start=month+'-01',end=month+'-'+String(days).padStart(2,'0');
- $('monthlyReload').disabled=true;$('monthlyStatus').textContent='Consultando trabajadores y estados del mes…';
+ $('monthlyReload').disabled=true;$('monthlyStatus').textContent=confirmedSaveMessage?confirmedSaveMessage+' Actualizando la vista…':'Consultando trabajadores y estados del mes…';
  try{
   const between=collectionName=>getDocs(query(collection(db,collectionName),where('workDate','>=',start),where('workDate','<=',end)));
   const [users,attendance,situations,guards,grants]=await Promise.all([getDocs(collection(db,'users')),between('attendance'),between('presenceSituations'),between('guardDuties'),between('graciousDays')]);
@@ -1205,7 +1230,7 @@ async function refreshMonthly(){
   for(const person of workers){const tr=document.createElement('tr'),name=document.createElement('th');name.className='month-person';name.scope='row';name.textContent=person.fullName||person.email||person.id;const controls=document.createElement('span');controls.className='monthly-order-controls no-print';for(const [direction,symbol,title] of [[-1,'↑','Subir trabajador'],[1,'↓','Bajar trabajador']]){const btn=document.createElement('button');btn.type='button';btn.className='monthly-order-btn';btn.textContent=symbol;btn.title=title+' en registro e informes';btn.setAttribute('aria-label',title+' '+(person.fullName||person.email||''));btn.disabled=(direction===-1&&workers[0].id===person.id)||(direction===1&&workers[workers.length-1].id===person.id);btn.addEventListener('click',()=>moveWorkerInMonthly(person.id,direction));controls.appendChild(btn)}name.appendChild(controls);tr.appendChild(name);
    for(let d=1;d<=days;d++){const date=start.slice(0,8)+String(d).padStart(2,'0'),key=person.id+'_'+date,[code,label,style]=monthlyStatusInfo(situationMap.get(key),attendanceSet.has(key),guardSet.has(key));const td=document.createElement('td');td.dataset.person=person.id;td.dataset.date=date;td.tabIndex=0;const weekDay=new Date(Date.UTC(Number(date.slice(0,4)),Number(date.slice(5,7))-1,Number(date.slice(8,10)))).getUTCDay();td.classList.add((weekDay===0||weekDay===6)?'month-weekend':'month-weekday');const mark=document.createElement('span');mark.className='monthly-cell '+style+(attendanceMap.get(key)?.source==='admin'?' monthly-manual-present':'');mark.textContent='';const mainCode=document.createElement('span');mainCode.className='monthly-grant-state';mainCode.textContent=code;mark.appendChild(mainCode);td.title=(person.fullName||person.email||'Trabajador')+' · '+date.split('-').reverse().join('/')+' · '+label+(attendanceMap.get(key)?.source==='admin'?' (presencia anotada por administración; motivo: '+(attendanceMap.get(key)?.reason||'no indicado')+')':'')+(grantMap.has(key)?' · Concesión: +'+grantMap.get(key).quantity+' día(s) graciable(s). Motivo: '+(grantMap.get(key).note||'—'):'');mark.setAttribute('aria-label',label+(attendanceMap.get(key)?.source==='admin'?' (registro administrativo)':'')+(grantMap.has(key)?' · Concesión de '+grantMap.get(key).quantity+' día(s) graciable(s)':''));if(grantMap.has(key)){mark.classList.add('monthly-has-grant');td.classList.add('monthly-grant-cell');const flag=document.createElement('span');flag.className='monthly-grant-flag';flag.textContent='+'+grantMap.get(key).quantity+'AG';mark.appendChild(flag)}td.appendChild(mark);td.addEventListener('click',e=>{if(monthlySkipDragClick){monthlySkipDragClick=false;return;}openMonthlyStateEditor(person,date,situationMap.get(key),attendanceSet.has(key),guardSet.has(key),attendanceMap.get(key)?.source==='admin',e.shiftKey)});td.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&$('monthlyTable').classList.contains('monthly-status-editing')){e.preventDefault();openMonthlyStateEditor(person,date,situationMap.get(key),attendanceSet.has(key),guardSet.has(key),attendanceMap.get(key)?.source==='admin')}});tr.appendChild(td)}body.appendChild(tr)}
   if(!workers.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=days+1;td.textContent='No hay trabajadores activos registrados.';tr.appendChild(td);body.appendChild(tr)}
-  $('monthlyStatus').textContent=workers.length+' trabajador(es) · '+days+' días · '+month.split('-').reverse().join('/')+'. «Sin registro» no equivale a ausencia. En pantallas estrechas, desplaza la tabla horizontalmente.';
+  $('monthlyStatus').textContent=(confirmedSaveMessage?confirmedSaveMessage+' ':'')+workers.length+' trabajador(es) · '+days+' días · '+month.split('-').reverse().join('/')+'. «Sin registro» no equivale a ausencia. En pantallas estrechas, desplaza la tabla horizontalmente.';
   if(pendingMonthlyJump && pendingMonthlyJump.date.slice(0,7)===month){
    const {uid:targetUid,date:targetDate}=pendingMonthlyJump;pendingMonthlyJump=null;
    if(!$('monthlyTable').classList.contains('monthly-status-editing'))$('monthlyEditStatus').click();
@@ -1213,7 +1238,7 @@ async function refreshMonthly(){
    if(targetPerson){const key=targetUid+'_'+targetDate;openMonthlyStateEditor(targetPerson,targetDate,situationMap.get(key),attendanceSet.has(key),guardSet.has(key),attendanceMap.get(key)?.source==='admin');}
    else $('monthlyStatus').textContent='No se encontró al trabajador activo en Registro de personal. Revisa si está dado de baja.';
   }
- }catch(err){if(version===monthlyVersion)$('monthlyStatus').textContent='No se pudo consultar el mes: '+(err.code||err.message)+'.'}
+ }catch(err){if(version===monthlyVersion)$('monthlyStatus').textContent=(confirmedSaveMessage?'Cambio guardado, pero no se pudo actualizar la vista. Recarga Registro de personal para comprobarlo: ':'No se pudo consultar el mes: ')+(err.code||err.message)+'.'}
  finally{if(version===monthlyVersion)$('monthlyReload').disabled=false}
 }
 

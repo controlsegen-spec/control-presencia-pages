@@ -292,6 +292,16 @@ html,body {background:#e0e7f0;}
 #monthlyEditStatus{margin-left:0;white-space:nowrap;order:1}
 #monthlyEditOrder{margin-left:auto;white-space:nowrap;order:2}
 @media(max-width:740px){.monthly-toolbar .monthly-actions{flex-wrap:wrap}#monthlyEditOrder{margin-left:auto}}
+
+/* V6.15.32 — Avisos de fichaje en tiempo real para administradores */
+.live-connection-line{font-size:11px;color:#387353;text-align:right;min-height:17px;margin-top:3px}.live-connection-line.live-offline{color:#a43535}
+.live-attendance-toast{position:fixed;top:20px;right:20px;z-index:9999;width:min(350px,calc(100vw - 28px));background:#fff;border:1px solid #cad9eb;border-left:5px solid #27875b;border-radius:12px;box-shadow:0 14px 35px rgba(23,45,73,.18);padding:13px 42px 13px 15px;color:#213650;animation:attendance-toast-in .22s ease-out}
+.live-attendance-toast strong{display:block;font-size:14px;margin-bottom:3px}
+.live-attendance-toast .live-attendance-text{font-size:13px;line-height:1.4}
+.live-attendance-toast button{position:absolute;top:5px;right:7px;padding:5px 9px;border-radius:7px;background:transparent;color:#536a81;font-size:19px;line-height:1}
+.live-attendance-toast button:hover{background:#edf2f8}
+@keyframes attendance-toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+@media print{.live-attendance-toast{display:none!important}}
 </style></head><body><div class="wrap"><div class="top presence-header"><img class="ea-logo" src="Logo-EA-blanco-version-3.png" alt="Ejército del Aire y del Espacio"><h1 class="head">Control de presencia SEGEN ALA14</h1><button id="logout" class="ghost hidden" type="button">Salir</button></div>
 <section id="accessPicker" class="card access-picker"><h2>¿Cómo quieres acceder?</h2><p class="muted small">Selecciona tu tipo de acceso para continuar.</p><div class="access-options"><button type="button" class="access-option" id="chooseAdmin"><span class="access-icon">♙</span><strong>Administrador</strong><span>Gestionar personal, dependencias e informes de asistencia</span></button><button type="button" class="access-option" id="chooseWorker"><span class="access-icon">✓</span><strong>Trabajador</strong><span>Confirmar tu presencia diaria en el puesto de trabajo</span></button></div></section>
 <section id="login" class="card login-card hidden"><div class="login-header"><h2 id="loginHeading">Acceso</h2><button class="ghost" type="button" id="backToModes">← Volver</button></div><p class="muted small" id="loginHelp">Introduce tu correo y contraseña de Firebase.</p><form id="loginForm" class="form"><label for="email">Usuario (formato correo)</label><input id="email" type="email" autocomplete="username" required><label for="pass">Contraseña</label><div class="login-password-wrapper"><input id="pass" type="password" autocomplete="current-password" required><button type="button" id="toggleLoginPassword" class="password-visibility" aria-label="Mostrar contraseña" aria-pressed="false" title="Mostrar contraseña"><svg id="passwordEye" viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></div><p><button id="loginBtn" type="submit">Entrar</button></p></form></section>
@@ -305,7 +315,7 @@ html,body {background:#e0e7f0;}
   <div id="workerStatus" class="exportinfo selection" role="status" aria-live="polite">Comprobando presencia…</div>
   <p class="muted small">Al guardar y verificar el fichaje, la sesión se cierra automáticamente. El navegador puede recordar las credenciales por su cuenta.</p>
 </section>
-<div id="dashboard" class="hidden"><nav class="navtabs" aria-label="Secciones de administración"><button type="button" class="navtab active" id="tabReports">Control diario</button><button type="button" class="navtab" id="tabMonthly">Registro de personal</button><button type="button" class="navtab" id="tabGuards">Consulta de días</button><button type="button" class="navtab" id="tabDepartments">Dependencias</button><button type="button" class="navtab" id="tabStaff">Personal</button></nav>
+<div id="dashboard" class="hidden"><nav class="navtabs" aria-label="Secciones de administración"><button type="button" class="navtab active" id="tabReports">Control diario</button><button type="button" class="navtab" id="tabMonthly">Registro de personal</button><button type="button" class="navtab" id="tabGuards">Consulta de días</button><button type="button" class="navtab" id="tabDepartments">Dependencias</button><button type="button" class="navtab" id="tabStaff">Personal</button></nav><div class="live-connection-line no-print" id="liveAttendanceConnection" role="status" aria-live="polite"></div>
 <section id="manageDepartments" class="manage-section hidden"><div class="manage-grid"><section class="card"><h2>Gestionar dependencias</h2><form id="deptForm"><input id="deptEditId" type="hidden"><label for="deptName">Nombre de la dependencia</label><input id="deptName" maxlength="100" required placeholder="Ej.: SERVICIO DE PREVENCIÓN"><label class="check-row" for="deptActive"><input type="checkbox" id="deptActive" checked><span>Dependencia activa</span></label><div class="manage-row"><button id="deptSave" type="submit">Guardar dependencia</button><button class="ghost" type="button" id="deptCancel">Cancelar edición</button></div></form><div id="deptMessage" class="manage-msg" role="status"></div></section><section class="card"><div class="toolbar"><h2>Dependencias registradas</h2><label class="show-removed"><input type="checkbox" id="showRetiredDeps"> Ver retiradas</label><button class="ghost" type="button" id="deptReload">Actualizar</button></div><div class="tablewrap"><table><thead><tr><th>Dependencia</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="deptRows"></tbody></table></div></section></div></section>
 <section id="manageStaff" class="manage-section hidden"><div class="manage-grid"><section class="card"><h2>Gestionar trabajadores</h2><p class="muted small">El correo se utiliza como nombre de usuario. Puedes modificarlo sin cambiar la contraseña ni perder los fichajes.</p><form id="staffForm"><input type="hidden" id="staffUid"><p id="staffModeLabel" class="mode-note">Nuevo trabajador · Alta de cuenta y ficha</p><label for="staffName">Nombre y apellidos</label><input id="staffName" required maxlength="120"><label for="staffEmail">Usuario de acceso (formato correo)</label><input id="staffEmail" type="email" required maxlength="254" autocomplete="off"><div id="newCredentials"><label for="staffPassword">Contraseña inicial</label><input id="staffPassword" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" minlength="6" placeholder="Mínimo 6 caracteres"><p class="help">Contraseña exclusiva para este trabajador. No se guarda en la ficha ni se almacena en el navegador por esta aplicación.</p></div><label for="staffDept">Dependencia</label><select id="staffDept" required><option value="">Selecciona una dependencia</option></select><label class="check-row" for="staffActive"><input type="checkbox" id="staffActive" checked><span>Trabajador activo</span></label><div class="manage-row"><button id="staffSave" type="submit">Crear trabajador</button><button class="ghost" type="button" id="staffCancel">Limpiar formulario</button></div></form><div id="staffMessage" class="manage-msg" role="status"></div></section><section class="card"><div class="toolbar"><h2>Personal registrado</h2><button class="ghost" type="button" id="staffReload">Actualizar</button></div><div class="tablewrap"><table><thead><tr><th>Trabajador</th><th>Dependencia</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="staffRows"></tbody></table></div></section></div></section>
 
@@ -453,10 +463,11 @@ html,body {background:#e0e7f0;}
 <p class="fineprint">Informe de prueba, sin carácter acreditativo de jornada laboral. Los nuevos fichajes utilizan Europe/Madrid y los registros antiguos conservan su fecha original. Las cifras «Sin registro» incluyen días no laborables y no prueban ausencia. La exportación usa los perfiles y dependencias actuales: los cambios históricos de asignación no están todavía modelados. El acceso requiere administrador autorizado.</p>
 </main></div><!-- end reports -->
 </div><div id="status" class="notice hidden" role="status" aria-live="polite"></div></div>
+<aside id="liveAttendanceToast" class="live-attendance-toast hidden no-print" role="status" aria-live="polite" aria-atomic="true"><strong>✓ Nuevo fichaje</strong><div class="live-attendance-text" id="liveAttendanceText"></div><button type="button" id="liveAttendanceDismiss" aria-label="Cerrar aviso" title="Cerrar aviso">×</button></aside>
 <script type="module">
 import {initializeApp,deleteApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,initializeAuth,inMemoryPersistence,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,deleteUser,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFirestore,doc,getDoc,getDocs,collection,query,where,addDoc,setDoc,updateDoc,runTransaction,writeBatch,deleteDoc,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {getFirestore,doc,getDoc,getDocs,collection,query,where,addDoc,setDoc,updateDoc,runTransaction,writeBatch,deleteDoc,serverTimestamp,onSnapshot} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 const firebaseConfig={apiKey:'AIzaSyAA328jFJgoKmhJc2u-4dmrvgIiDZKVJ-k',authDomain:'control-presencia-fireba-37b8e.firebaseapp.com',projectId:'control-presencia-fireba-37b8e',storageBucket:'control-presencia-fireba-37b8e.firebasestorage.app',messagingSenderId:'199352090992',appId:'1:199352090992:web:f1a2f0a342c80bc3b60fb5'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),$=id=>document.getElementById(id);
 let activeUid=null,adminReady=false,report=null,requestVersion=0;
@@ -1072,6 +1083,41 @@ function finishMonthlySave(message){
  void refreshMonthly(message);
 }
 
+// V6.15.34: borrado de estados sencillo y prevalidado, sin reintentos de transacción.
+// No altera guardias, saldos, concesiones ni fichajes hechos por el trabajador.
+async function clearSimpleMonthlyDates(personId,dates){
+ if(navigator.onLine===false)throw Error('No hay conexión a Internet. Conéctate y comprueba el estado antes de intentarlo de nuevo.');
+ const candidates=[];
+ // Leer pocos días a la vez evita saturar el navegador en selecciones largas.
+ for(let i=0;i<dates.length;i+=8){
+  const section=dates.slice(i,i+8);
+  const found=await Promise.all(section.map(async date=>{
+   const key=personId+'_'+date;
+   const [sit,att,guard]=await Promise.all([
+    getDoc(doc(db,'presenceSituations',key)),
+    getDoc(doc(db,'attendance',key)),
+    getDoc(doc(db,'guardDuties',key))
+   ]);
+   return {date,key,sit,att,guard};
+  }));
+  candidates.push(...found);
+ }
+ // Antes de escribir, comprobar TODOS los días. Si uno está protegido, no cambiar ninguno.
+ for(const item of candidates){
+  if(item.guard.exists())throw Error('El '+item.date+' tiene una guardia. No se ha cambiado ninguna fecha; gestiona la guardia individualmente.');
+  if(item.att.exists()&&item.att.data().source!=='admin')throw Error('El '+item.date+' tiene un fichaje del trabajador. No se ha cambiado ninguna fecha.');
+  if(item.sit.exists()&&['saliente_guardia','dia_agraciable'].includes(item.sit.data().type))throw Error('El '+item.date+' consume saldo. No se ha cambiado ninguna fecha; gestiona el disfrute individualmente.');
+ }
+ const batch=writeBatch(db);
+ let changes=0;
+ for(const item of candidates){
+  if(item.sit.exists()){batch.delete(doc(db,'presenceSituations',item.key));changes++}
+  if(item.att.exists()&&item.att.data().source==='admin'){batch.delete(doc(db,'attendance',item.key));changes++}
+ }
+ if(changes)await batch.commit();
+ return changes;
+}
+
 $('monthlyStateSave').addEventListener('click',async()=>{
  if(!monthlySelectedState||!adminReady||!auth.currentUser)return;
 
@@ -1083,22 +1129,21 @@ $('monthlyStateSave').addEventListener('click',async()=>{
   const endSave=beginMonthlySave('Comprobando las fechas antes de guardar…');
   try{
    const refs=datesToSave.map(d=>({date:d,sit:doc(db,'presenceSituations',person.id+'_'+d),attendance:doc(db,'attendance',person.id+'_'+d),guard:doc(db,'guardDuties',person.id+'_'+d)}));
-   // La transacción valida el conjunto completo antes de modificar ningún día.
-   await runTransaction(db,async tx=>{
-    const docs=await Promise.all(refs.map(async x=>({date:x.date,a:await tx.get(x.attendance),g:await tx.get(x.guard),s:await tx.get(x.sit),sitRef:x.sit,attRef:x.attendance})));
-    for(const d of docs){
-     // La presencia manual puede corregirse, pero nunca el fichaje original del trabajador.
-     if(d.a.exists() && (type!=='' || d.a.data().source!=='admin'))throw Error('El '+d.date+' tiene un fichaje que no puede modificarse en bloque. No se modificó ninguna fecha.');
-     if(d.g.exists())throw Error('El '+d.date+' tiene una guardia. Modifícala individualmente; no se cambió ninguna fecha.');
-     if(d.s.exists()&&['saliente_guardia','dia_agraciable'].includes(d.s.data().type))throw Error('El '+d.date+' consume un saldo. Modifícalo individualmente; no se cambió ninguna fecha.');
-    }
-    for(const d of docs){
-     if(type===''){
-      if(d.s.exists())tx.delete(d.sitRef);
-      if(d.a.exists() && d.a.data().source==='admin')tx.delete(d.attRef);
-     }else tx.set(d.sitRef,{userId:person.id,workDate:d.date,type,updatedBy:auth.currentUser.uid,updatedAt:serverTimestamp()});
-    }
-   });
+   if(type===''){
+    $('monthlyStateMessage').textContent='Comprobando los días y retirando los estados administrativos…';
+    await clearSimpleMonthlyDates(person.id,datesToSave);
+   }else{
+    // Las asignaciones múltiples conservan las validaciones transaccionales anteriores.
+    await runTransaction(db,async tx=>{
+     const docs=await Promise.all(refs.map(async x=>({date:x.date,a:await tx.get(x.attendance),g:await tx.get(x.guard),s:await tx.get(x.sit),sitRef:x.sit,attRef:x.attendance})));
+     for(const d of docs){
+      if(d.a.exists())throw Error('El '+d.date+' tiene una presencia que no puede modificarse en bloque. No se modificó ninguna fecha.');
+      if(d.g.exists())throw Error('El '+d.date+' tiene una guardia. Modifícala individualmente; no se cambió ninguna fecha.');
+      if(d.s.exists()&&['saliente_guardia','dia_agraciable'].includes(d.s.data().type))throw Error('El '+d.date+' consume saldo. Modifícalo individualmente; no se cambió ninguna fecha.');
+     }
+     for(const d of docs)tx.set(d.sitRef,{userId:person.id,workDate:d.date,type,updatedBy:auth.currentUser.uid,updatedAt:serverTimestamp()});
+    });
+   }
    finishMonthlySave(type===''?'Estados retirados en '+datesToSave.length+' días. No se han modificado guardias ni saldos.':'Situación guardada para '+datesToSave.length+' días. No se han modificado guardias ni saldos.');
   }catch(err){$('monthlyStateMessage').textContent='No se pudo guardar ninguna fecha: '+(err.code||err.message);}
   finally{endSave();}
@@ -1134,6 +1179,17 @@ $('monthlyStateSave').addEventListener('click',async()=>{
  }
  if(type==='guardia'&&guard&&(!existingType||present))return $('monthlyStateMessage').textContent='La guardia ya está registrada para esta fecha.';
  if(!confirm('¿Guardar «'+(type==='guardia'?'Guardia':type==='presente_manual'?'Presente (registro manual)':type?SITUATION_LABELS[type]||type:'Sin registro')+'» para '+(person.fullName||person.email)+' el '+date.split('-').reverse().join('/')+'?'))return;
+ // Sin registro: ruta independiente de borrado, sin transacción y sin consultas de saldos.
+ // Las guardias y los días que consumen saldo conservan su procedimiento individual.
+ if(type===''&&!guard&&!['saliente_guardia','dia_agraciable'].includes(existingType)){
+  const endClear=beginMonthlySave('Comprobando y retirando el estado administrativo…');
+  try{
+   const changes=await clearSimpleMonthlyDates(person.id,[date]);
+   finishMonthlySave(changes?'Estado retirado correctamente.':'La fecha ya estaba sin registro.');
+  }catch(err){$('monthlyStateMessage').textContent='No se pudo quitar el estado: '+(err.code||err.message)+'. Comprueba el calendario antes de repetir.';}
+  finally{endClear();}
+  return;
+ }
  const endSave=beginMonthlySave('Guardando y comprobando los datos del día…');
  try{
   const uid=person.id,refId=uid+'_'+date,guardRef=doc(db,'guardDuties',refId),sitRef=doc(db,'presenceSituations',refId),attRef=doc(db,'attendance',refId);
@@ -1364,10 +1420,92 @@ $('loginForm').addEventListener('submit',async e=>{
   }catch(err){status('No se pudo iniciar sesión: '+(err.code||err.message||'error'),true)}
   finally{$('loginBtn').disabled=false;$('pass').value='';setPasswordVisibility(false)}
 });
+
+// V6.15.32: escucha los fichajes del día; no muestra registros antiguos al conectar.
+let liveAttendanceUnsubscribe=null,liveAttendanceToastTimer=null,liveAttendanceRefreshTimer=null;
+let liveAttendanceKnown=new Map(),liveAttendanceReady=false,liveAttendanceNames=new Map(),liveAttendanceDay='',liveAttendanceStartedAt=0;
+function liveStatus(text,failed=false){const el=$('liveAttendanceConnection');if(el){el.textContent=text;el.classList.toggle('live-offline',failed);}}
+function dismissLiveAttendanceToast(){
+ if(liveAttendanceToastTimer!==null){clearTimeout(liveAttendanceToastTimer);liveAttendanceToastTimer=null;}
+ $('liveAttendanceToast').classList.add('hidden');
+}
+$('liveAttendanceDismiss').addEventListener('click',dismissLiveAttendanceToast);
+function stopLiveAttendance(){
+ if(liveAttendanceUnsubscribe){liveAttendanceUnsubscribe();liveAttendanceUnsubscribe=null;}
+ if(liveAttendanceRefreshTimer!==null){clearTimeout(liveAttendanceRefreshTimer);liveAttendanceRefreshTimer=null;}
+ liveAttendanceReady=false;liveAttendanceKnown.clear();liveAttendanceNames.clear();liveAttendanceDay='';liveAttendanceStartedAt=0;
+ liveStatus('');
+ dismissLiveAttendanceToast();
+}
+function showLiveAttendance(data){
+ const name=liveAttendanceNames.get(data.userId)||'Un trabajador';
+ const time=madridTime(data.checkedAt);
+ $('liveAttendanceText').textContent=name+' ha registrado su presencia'+(time!=='—'?' a las '+time:'')+'.';
+ $('liveAttendanceToast').classList.remove('hidden');
+ if(liveAttendanceToastTimer!==null)clearTimeout(liveAttendanceToastTimer);
+ liveAttendanceToastTimer=setTimeout(dismissLiveAttendanceToast,8000);
+}
+function startLiveAttendance(uid){
+ stopLiveAttendance();
+ liveAttendanceDay=madridDay();
+ liveAttendanceStartedAt=Date.now();
+ liveStatus('● Conectando avisos de fichajes…');
+ const currentDay=liveAttendanceDay;
+ // Solo se leen nombres de las personas autenticadas como administrador.
+ getDocs(collection(db,'users')).then(snap=>{
+  if(!adminReady||activeUid!==uid||liveAttendanceDay!==currentDay)return;
+  liveAttendanceNames=new Map(snap.docs.map(d=>[d.id,d.data().fullName||d.data().email||'Trabajador']));
+ }).catch(()=>{});
+ liveAttendanceUnsubscribe=onSnapshot(query(collection(db,'attendance'),where('workDate','==',currentDay)),snap=>{
+  if(!adminReady||activeUid!==uid)return;
+  // Un aviso de conexión ayuda a detectar falta de permisos o caída de red.
+  if(!snap.metadata.fromCache)liveStatus('● Avisos de fichajes conectados');
+  else if(!liveAttendanceReady)liveStatus('● Avisos esperando conexión con Firebase');
+  const incoming=new Map();
+  for(const entry of snap.docs){
+   const data=entry.data();
+   const checkedMs=data.checkedAt?.toMillis?.()||0;
+   incoming.set(entry.id,checkedMs);
+  }
+  // Primera carga: diferenciar fichajes históricos de uno que haya sucedido
+  // después de iniciar la escucha, incluso si llega con la primera instantánea.
+  for(const entry of snap.docs){
+   const data=entry.data();
+   const previous=liveAttendanceKnown.get(entry.id);
+   const checkedMs=incoming.get(entry.id)||0;
+   const newlyRecorded=checkedMs>0&&checkedMs>=liveAttendanceStartedAt-1500;
+   const newDoc=!liveAttendanceKnown.has(entry.id);
+   const changedRegistration=previous!==undefined&&checkedMs!==previous&&newlyRecorded;
+   const isNewAfterListen=(newDoc&&newlyRecorded)||changedRegistration;
+   if(!isNewAfterListen||snap.metadata.fromCache||entry.metadata.hasPendingWrites)continue;
+   if(data.source==='admin'||data.recordedBy)continue;
+   showLiveAttendance(data);
+   // Refrescar Control diario cuando incluya la fecha actual.
+   if(currentSection==='reports'&&liveAttendanceRefreshTimer===null){
+    liveAttendanceRefreshTimer=setTimeout(()=>{
+     liveAttendanceRefreshTimer=null;
+     if(!adminReady||activeUid!==uid||currentSection!=='reports')return;
+     try{const period=dates();if(period.start<=currentDay&&period.end>=currentDay)refresh();}catch(_){/* fecha inválida */}
+    },650);
+   }
+  }
+  // Conservar la base de datos de fichajes detectados. También se actualiza
+  // al recibir la caché para distinguir correctamente un registro posterior.
+  liveAttendanceKnown=incoming;
+  if(!snap.metadata.fromCache)liveAttendanceReady=true;
+ },err=>{
+  const reason=err.code||err.message||'error desconocido';
+  liveStatus('● Avisos no disponibles: '+reason,true);
+  console.warn('Escucha de fichajes no disponible:',reason);
+  liveAttendanceReady=false;
+ });
+}
+
 $('logout').addEventListener('click',()=>signOut(auth));$('refresh').addEventListener('click',refresh);
 onAuthStateChanged(auth,async user=>{
  if(workerCloseTimer!==null){clearInterval(workerCloseTimer);workerCloseTimer=null;}
  const uid=user?.uid||null,epoch=++workerEpoch;
+ stopLiveAttendance();
  activeUid=uid;adminReady=false;employee=null;employeeBusy=false;workerReady(false);
  ++requestVersion;clearDashboard();currentSection='reports';
  $('reportsView').classList.remove('hidden');$('manageDepartments').classList.add('hidden');$('manageStaff').classList.add('hidden');$('manageGuards').classList.add('hidden');$('monthlyView').classList.add('hidden');
@@ -1386,6 +1524,7 @@ onAuthStateChanged(auth,async user=>{
    if(admin.exists()&&admin.data().active===true){
      if(chosenAccess==='worker'){postLogoutMessage='Esta cuenta es de administrador. Selecciona «Administrador» para entrar.';await signOut(auth);return;}
      adminReady=true;$('login').classList.add('hidden');$('dashboard').classList.remove('hidden');$('adminEmail').textContent=user.email||'';
+     startLiveAttendance(uid);
      await refresh();return;
    }
    if(chosenAccess==='admin'){postLogoutMessage='Esta cuenta es de trabajador. Selecciona «Trabajador» para entrar.';await signOut(auth);return;}

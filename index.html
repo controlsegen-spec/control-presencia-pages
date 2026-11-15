@@ -1083,39 +1083,75 @@ function finishMonthlySave(message){
  void refreshMonthly(message);
 }
 
-// V6.15.34: borrado de estados sencillo y prevalidado, sin reintentos de transacción.
-// No altera guardias, saldos, concesiones ni fichajes hechos por el trabajador.
+// V6.15.35: «Sin registro» ligero. Solo lee documentos que pueden borrarse.
+// Conserva la comprobación del estado real de la situación antes de eliminarla;
+// nunca borra guardias ni registros de presencia hechos por trabajadores.
 async function clearSimpleMonthlyDates(personId,dates){
- if(navigator.onLine===false)throw Error('No hay conexión a Internet. Conéctate y comprueba el estado antes de intentarlo de nuevo.');
- const candidates=[];
- // Leer pocos días a la vez evita saturar el navegador en selecciones largas.
- for(let i=0;i<dates.length;i+=8){
-  const section=dates.slice(i,i+8);
-  const found=await Promise.all(section.map(async date=>{
-   const key=personId+'_'+date;
-   const [sit,att,guard]=await Promise.all([
-    getDoc(doc(db,'presenceSituations',key)),
-    getDoc(doc(db,'attendance',key)),
-    getDoc(doc(db,'guardDuties',key))
-   ]);
-   return {date,key,sit,att,guard};
-  }));
-  candidates.push(...found);
+ if(navigator.onLine===false)throw Error('No hay conexión. Comprueba el estado antes de volver a intentarlo.');
+ const candidates=dates.map(date=>{
+  const key=personId+'_'+date;
+  const type=monthlyVisibleSituations.get(key);
+  const attendance=monthlyVisibleAttendance.has(key);
+  const adminAttendance=monthlyVisibleAdminAttendance.has(key);
+  if(monthlyVisibleGuards.has(key))throw Error('El '+date+' tiene una guardia. No se ha cambiado ninguna fecha.');
+  if(attendance&&!adminAttendance)throw Error('El '+date+' contiene un fichaje del trabajador. No se ha cambiado ninguna fecha.');
+  if(type==='saliente_guardia'||type==='dia_agraciable')throw Error('El '+date+' consume saldo. Modifícalo individualmente.');
+  return {date,key,type,attendance,adminAttendance};
+ });
+ // Se vuelve a leer la situación actual (una lectura por día, no tres).
+ // Así se evita borrar un disfrute que haya cambiado en otro dispositivo.
+ const actual=[];
+ for(let i=0;i<candidates.length;i+=20){
+  const section=candidates.slice(i,i+20);
+  actual.push(...await Promise.all(section.map(async item=>{
+   const sit=item.type?await getDoc(doc(db,'presenceSituations',item.key)):null;
+   const att=item.adminAttendance?await getDoc(doc(db,'attendance',item.key)):null;
+   return {...item,sit,att};
+  })));
  }
- // Antes de escribir, comprobar TODOS los días. Si uno está protegido, no cambiar ninguno.
- for(const item of candidates){
-  if(item.guard.exists())throw Error('El '+item.date+' tiene una guardia. No se ha cambiado ninguna fecha; gestiona la guardia individualmente.');
-  if(item.att.exists()&&item.att.data().source!=='admin')throw Error('El '+item.date+' tiene un fichaje del trabajador. No se ha cambiado ninguna fecha.');
-  if(item.sit.exists()&&['saliente_guardia','dia_agraciable'].includes(item.sit.data().type))throw Error('El '+item.date+' consume saldo. No se ha cambiado ninguna fecha; gestiona el disfrute individualmente.');
+ for(const item of actual){
+  if(item.sit?.exists()&&item.sit.data().type!==item.type)
+   throw Error('El estado del '+item.date+' cambió mientras editabas. Actualiza el calendario. No se ha borrado ninguna fecha.');
+  if(item.att?.exists()&&item.att.data().source!=='admin')
+   throw Error('La presencia del '+item.date+' pertenece al trabajador. No se ha borrado ninguna fecha.');
  }
- const batch=writeBatch(db);
- let changes=0;
- for(const item of candidates){
-  if(item.sit.exists()){batch.delete(doc(db,'presenceSituations',item.key));changes++}
-  if(item.att.exists()&&item.att.data().source==='admin'){batch.delete(doc(db,'attendance',item.key));changes++}
+ const batch=writeBatch(db);let changes=0;
+ for(const item of actual){
+  if(item.sit?.exists()){batch.delete(doc(db,'presenceSituations',item.key));changes++}
+  if(item.att?.exists()&&item.att.data().source==='admin'){batch.delete(doc(db,'attendance',item.key));changes++}
  }
  if(changes)await batch.commit();
  return changes;
+}
+// Actualiza las casillas afectadas sin descargar otra vez todos los registros del mes.
+// No afecta a las marcas de concesión de días graciables.
+function applyClearedMonthlyDays(personId,dates){
+ for(const date of dates){
+  const key=personId+'_'+date;
+  monthlyVisibleSituations.delete(key);
+  if(monthlyVisibleAdminAttendance.has(key)){
+   monthlyVisibleAdminAttendance.delete(key);
+   monthlyVisibleAttendance.delete(key);
+  }
+  const td=$('monthlyRows').querySelector('td[data-person="'+personId+'"][data-date="'+date+'"]');
+  if(!td)continue;
+  const [code,label,style]=monthlyStatusInfo(null,monthlyVisibleAttendance.has(key),monthlyVisibleGuards.has(key));
+  const mark=td.querySelector('.monthly-cell');
+  if(!mark)continue;
+  mark.classList.remove('monthly-present','monthly-combined','monthly-guard','monthly-absence','monthly-leave','monthly-missing','monthly-exception','monthly-manual-present');
+  mark.classList.add(style);
+  const main=mark.querySelector('.monthly-grant-state');
+  if(main)main.textContent=code;
+  mark.setAttribute('aria-label',label+(mark.classList.contains('monthly-has-grant')?' · Concesión graciable':''));
+  td.title=(monthlyWorkersCache.find(p=>p.id===personId)?.fullName||'Trabajador')+' · '+date.split('-').reverse().join('/')+' · '+label+(mark.classList.contains('monthly-has-grant')?' · Concesión graciable registrada':'');
+ }
+}
+function finishSimpleMonthlyClear(message,personId,dates){
+ closeMonthlyStateEditor();
+ applyClearedMonthlyDays(personId,dates);
+ $('monthlyStatus').textContent=message+' El calendario ya está actualizado.';
+ // El informe se volverá a consultar al acceder a Control diario.
+ clearDashboard();
 }
 
 $('monthlyStateSave').addEventListener('click',async()=>{
@@ -1144,7 +1180,8 @@ $('monthlyStateSave').addEventListener('click',async()=>{
      for(const d of docs)tx.set(d.sitRef,{userId:person.id,workDate:d.date,type,updatedBy:auth.currentUser.uid,updatedAt:serverTimestamp()});
     });
    }
-   finishMonthlySave(type===''?'Estados retirados en '+datesToSave.length+' días. No se han modificado guardias ni saldos.':'Situación guardada para '+datesToSave.length+' días. No se han modificado guardias ni saldos.');
+   if(type==='')finishSimpleMonthlyClear('Estados retirados en '+datesToSave.length+' días. No se han modificado guardias ni saldos.',person.id,datesToSave);
+   else finishMonthlySave('Situación guardada para '+datesToSave.length+' días. No se han modificado guardias ni saldos.');
   }catch(err){$('monthlyStateMessage').textContent='No se pudo guardar ninguna fecha: '+(err.code||err.message);}
   finally{endSave();}
   return;
@@ -1185,7 +1222,7 @@ $('monthlyStateSave').addEventListener('click',async()=>{
   const endClear=beginMonthlySave('Comprobando y retirando el estado administrativo…');
   try{
    const changes=await clearSimpleMonthlyDates(person.id,[date]);
-   finishMonthlySave(changes?'Estado retirado correctamente.':'La fecha ya estaba sin registro.');
+   finishSimpleMonthlyClear(changes?'Estado retirado correctamente.':'La fecha ya estaba sin registro.',person.id,[date]);
   }catch(err){$('monthlyStateMessage').textContent='No se pudo quitar el estado: '+(err.code||err.message)+'. Comprueba el calendario antes de repetir.';}
   finally{endClear();}
   return;
@@ -1445,6 +1482,30 @@ function showLiveAttendance(data){
  if(liveAttendanceToastTimer!==null)clearTimeout(liveAttendanceToastTimer);
  liveAttendanceToastTimer=setTimeout(dismissLiveAttendanceToast,8000);
 }
+// V6.15.35: reflejar fichajes nuevos en el Registro de personal abierto,
+// sin recargar la pantalla ni interrumpir una selección múltiple.
+function applyLiveAttendanceToMonthly(data){
+ if(currentSection!=='monthly'||!data.userId||!data.workDate||!data.workDate.startsWith($('monthlyMonth').value+'-'))return;
+ const key=data.userId+'_'+data.workDate;
+ const td=$('monthlyRows').querySelector('td[data-person="'+data.userId+'"][data-date="'+data.workDate+'"]');
+ if(!td)return;
+ monthlyVisibleAttendance.add(key);
+ const admin=data.source==='admin';
+ if(admin)monthlyVisibleAdminAttendance.add(key);else monthlyVisibleAdminAttendance.delete(key);
+ const [code,label,style]=monthlyStatusInfo(monthlyVisibleSituations.get(key),true,monthlyVisibleGuards.has(key));
+ const mark=td.querySelector('.monthly-cell');if(!mark)return;
+ mark.classList.remove('monthly-present','monthly-combined','monthly-guard','monthly-absence','monthly-leave','monthly-missing','monthly-exception','monthly-manual-present');
+ mark.classList.add(style);
+ if(admin)mark.classList.add('monthly-manual-present');
+ const main=mark.querySelector('.monthly-grant-state');if(main)main.textContent=code;
+ mark.setAttribute('aria-label',label+(admin?' (registro administrativo)':'')+(mark.classList.contains('monthly-has-grant')?' · Concesión graciable':''));
+ td.title=(monthlyWorkersCache.find(p=>p.id===data.userId)?.fullName||'Trabajador')+' · '+data.workDate.split('-').reverse().join('/')+' · '+label;
+ if(monthlySelectedState?.person.id===data.userId&&monthlySelectedDates.includes(data.workDate)){
+  monthlySelectedState.present=true;
+  monthlySelectedState.adminPresent=admin;
+  $('monthlyStateMessage').textContent='Se ha recibido un fichaje nuevo para una fecha seleccionada. Revisa los estados antes de guardar.';
+ }
+}
 function startLiveAttendance(uid){
  stopLiveAttendance();
  liveAttendanceDay=madridDay();
@@ -1480,7 +1541,9 @@ function startLiveAttendance(uid){
    if(!isNewAfterListen||snap.metadata.fromCache||entry.metadata.hasPendingWrites)continue;
    if(data.source==='admin'||data.recordedBy)continue;
    showLiveAttendance(data);
-   // Refrescar Control diario cuando incluya la fecha actual.
+   // Reflejar el fichaje en Registro de personal, si ese mes está abierto.
+   applyLiveAttendanceToMonthly(data);
+   // Refrescar automáticamente Control diario si se está consultando esa fecha.
    if(currentSection==='reports'&&liveAttendanceRefreshTimer===null){
     liveAttendanceRefreshTimer=setTimeout(()=>{
      liveAttendanceRefreshTimer=null;

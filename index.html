@@ -270,6 +270,10 @@ html,body {background:#e0e7f0;}
 .navtabs{display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:100%}
 #tabDepartments{margin-left:auto}
 @media(max-width:740px){#tabDepartments{margin-left:0}}
+/* V6.15.26: Editar orden al extremo derecho, alineado con Personal. */
+#monthlyEditOrder{margin-left:auto;white-space:nowrap}
+.monthly-toolbar .monthly-actions{justify-content:flex-end}
+@media(max-width:740px){#monthlyEditOrder{margin-left:0}}
 </style></head><body><div class="wrap"><div class="top presence-header"><img class="ea-logo" src="Logo-EA-blanco-version-3.png" alt="Ejército del Aire y del Espacio"><h1 class="head">Control de presencia SEGEN ALA14</h1><button id="logout" class="ghost hidden" type="button">Salir</button></div>
 <section id="accessPicker" class="card access-picker"><h2>¿Cómo quieres acceder?</h2><p class="muted small">Selecciona tu tipo de acceso para continuar.</p><div class="access-options"><button type="button" class="access-option" id="chooseAdmin"><span class="access-icon">♙</span><strong>Administrador</strong><span>Gestionar personal, dependencias e informes de asistencia</span></button><button type="button" class="access-option" id="chooseWorker"><span class="access-icon">✓</span><strong>Trabajador</strong><span>Confirmar tu presencia diaria en el puesto de trabajo</span></button></div></section>
 <section id="login" class="card login-card hidden"><div class="login-header"><h2 id="loginHeading">Acceso</h2><button class="ghost" type="button" id="backToModes">← Volver</button></div><p class="muted small" id="loginHelp">Introduce tu correo y contraseña de Firebase.</p><form id="loginForm" class="form"><label for="email">Usuario (formato correo)</label><input id="email" type="email" autocomplete="username" required><label for="pass">Contraseña</label><div class="login-password-wrapper"><input id="pass" type="password" autocomplete="current-password" required><button type="button" id="toggleLoginPassword" class="password-visibility" aria-label="Mostrar contraseña" aria-pressed="false" title="Mostrar contraseña"><svg id="passwordEye" viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></div><p><button id="loginBtn" type="submit">Entrar</button></p></form></section>
@@ -332,8 +336,8 @@ html,body {background:#e0e7f0;}
         <div><label for="monthlyMonth">Mes</label><input type="month" id="monthlyMonth"></div>
         <button class="ghost" type="button" id="monthlyNext" aria-label="Mes siguiente">›</button>
         <button type="button" id="monthlyReload" class="hidden" tabindex="-1" aria-hidden="true">Consultar mes</button>
-        <button class="ghost" type="button" id="monthlyEditOrder" aria-pressed="false" aria-controls="monthlyTable">Editar orden</button>
         <button class="ghost" type="button" id="monthlyEditStatus" aria-pressed="false" aria-controls="monthlyTable">Editar estados</button>
+        <button class="ghost" type="button" id="monthlyEditOrder" aria-pressed="false" aria-controls="monthlyTable">Editar orden</button>
       </div>
     </div>
     <div class="monthly-legend" id="monthlyLegend" aria-label="Leyenda de estados">
@@ -650,7 +654,10 @@ try{
  const situations=new Map();for(const ds of sitSnap.docs){const item=ds.data();if(typeof item.userId==='string'&&typeof item.workDate==='string'&&SITUATION_LABELS[item.type])situations.set(item.userId+'_'+item.workDate,item)}
  const guardsByDate=new Map();for(const ds of guardSnap.docs){const item=ds.data();if(typeof item.userId==='string'&&typeof item.workDate==='string')guardsByDate.set(item.userId+'_'+item.workDate,item)}
  const rows=[];for(let day=interval.start;day<=interval.end;day=addDays(day,1)){for(const p of people){const key=p.id+'_'+day;const a=records.get(key);const situation=situations.get(key);rows.push({id:p.id,date:day,name:p.fullName||p.email||p.id,email:p.email||'',dept:deptMap.get(p.departmentId)||'Dependencia no encontrada',status:a?(guardsByDate.has(key)?'Presente / Guardia':'Presente'):(situation?SITUATION_LABELS[situation.type]:(guardsByDate.has(key)?'Guardia':'Sin registro')),time:a?madridTime(a.checkedAt):'—',active:p.active===true?'Activo':'Inactivo',type:situation?.type||'',hasAttendance:!!a,guardia:guardsByDate.has(key),guardNote:guardsByDate.get(key)?.note||''})}}
- rows.sort((a,b)=>a.date.localeCompare(b.date)||compareWorkerOrder(a,b));
+ // Control diario: primero presencias (incluida P/G), después otras situaciones y al final sin registro.
+ // Dentro de cada grupo se respeta el orden personalizado establecido en Registro de personal.
+ const dailyPriority=r=>r.hasAttendance?0:(r.status==='Sin registro'?2:1);
+ rows.sort((a,b)=>a.date.localeCompare(b.date)||dailyPriority(a)-dailyPriority(b)||compareWorkerOrder(a,b));
  const attended=rows.filter(r=>r.hasAttendance).length;
  const guardCount=rows.filter(r=>r.guardia).length;
  const missing=rows.filter(r=>r.status==='Sin registro').length;

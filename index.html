@@ -376,7 +376,7 @@ html,body {background:#e0e7f0;}
     </div>
     <div id="monthlyStateEditor" class="monthly-state-editor hidden no-print">
       <p class="monthly-state-title" id="monthlyStateSelected">Selecciona una casilla del calendario</p>
-      <p class="monthly-state-note">Puedes seleccionar varios días del mismo trabajador haciendo clic en ellos. Mantén Mayús (Shift) al pulsar otro día para seleccionar un intervalo. La edición múltiple solo permite situaciones administrativas como permiso oficial, comisión de servicio y baja médica; las guardias y saldos se editan de uno en uno.</p>
+      <p class="monthly-state-note">Puedes seleccionar varios días del mismo trabajador haciendo clic en ellos. Mantén Mayús (Shift) al pulsar otro día para seleccionar un intervalo. La edición múltiple permite situaciones administrativas (permisos, comisiones, bajas) y «Sin registro» para retirar estados administrativos en varias fechas. Las guardias y los días que afectan a saldos se editan de uno en uno.</p>
       <div class="monthly-state-fields">
         <div><label for="monthlyStateType">Estado</label><select id="monthlyStateType">
           <option value="">Sin registro (quitar estado)</option>
@@ -950,7 +950,7 @@ $('monthlyEditOrder').addEventListener('click',()=>{
 // V6.15.7: edición de un día directamente desde el calendario mensual.
 let monthlySelectedState=null;
 let monthlySelectedDates=[];
-const MONTHLY_BATCH_TYPES=new Set(['permiso_oficial','comision_servicio','baja_medica','asuntos_particulares','ausencia_justificada','ausencia_sin_justificar','otros','dia_adicional']);
+const MONTHLY_BATCH_TYPES=new Set(['','permiso_oficial','comision_servicio','baja_medica','asuntos_particulares','ausencia_justificada','ausencia_sin_justificar','otros','dia_adicional']);
 const monthlyStateEditor=$('monthlyStateEditor');
 function clearMonthlyHighlight(){
  $('monthlyTable').querySelectorAll('.month-selected,.month-row-selected,.month-day-selected').forEach(el=>el.classList.remove('month-selected','month-row-selected','month-day-selected'));
@@ -975,7 +975,7 @@ function updateMonthlyEditorFields(){
  $('monthlyManualReasonBox').classList.add('hidden');
  $('monthlyGrantFields').classList.toggle('hidden',choice!=='conceder_agraciable');
  $('monthlyStateSave').textContent=choice==='conceder_agraciable'?'Conceder días graciables':monthlySelectedDates.length>1?'Guardar en '+monthlySelectedDates.length+' días':'Guardar estado';
- if(monthlySelectedDates.length>1 && !MONTHLY_BATCH_TYPES.has(choice))$('monthlyStateMessage').textContent='Para modificar varios días, selecciona una situación administrativa (permiso, baja, comisión, etc.). Las guardias, salientes, graciables y presencia se gestionan por separado.';
+ if(monthlySelectedDates.length>1 && !MONTHLY_BATCH_TYPES.has(choice))$('monthlyStateMessage').textContent='Para modificar varios días, selecciona «Sin registro» o una situación administrativa (permiso, baja, comisión, etc.). Las guardias, salientes y graciables se gestionan por separado.';
 }
 $('monthlyStateType').addEventListener('change',updateMonthlyEditorFields);
 $('monthlyEditStatus').addEventListener('click',()=>{
@@ -1007,7 +1007,7 @@ function openMonthlyStateEditor(person,date,existingType,present,guard,adminPres
  $('monthlyStateSelected').textContent=(person.fullName||person.email||person.id)+' · '+(monthlySelectedDates.length===1?monthlySelectedDates[0].split('-').reverse().join('/'):monthlySelectedDates.length+' días seleccionados: '+monthlySelectedDates.map(x=>x.split('-').reverse().join('/')).join(', '));
  $('monthlyManualReason').value='Anotación manual por administración';
  updateMonthlyEditorFields();
- $('monthlyStateMessage').textContent=monthlySelectedDates.length>1?'Seleccionados '+monthlySelectedDates.length+' días. Escoge una situación administrativa para aplicarla conjuntamente. No se modificarán guardias, fichajes ni saldos.':(present?'Presencia ya registrada; si es del trabajador, no puede alterarse.':'Selecciona un estado para este día.');
+ $('monthlyStateMessage').textContent=monthlySelectedDates.length>1?'Seleccionados '+monthlySelectedDates.length+' días. Escoge una situación administrativa o «Sin registro». Los fichajes de trabajadores, guardias y saldos están protegidos.':(present?'Presencia ya registrada; si es del trabajador, no puede alterarse.':'Selecciona un estado para este día.');
  monthlyStateEditor.classList.remove('hidden');
  // Mantener el calendario visible al seleccionar varios días.
 }
@@ -1077,23 +1077,29 @@ $('monthlyStateSave').addEventListener('click',async()=>{
 
  if(monthlySelectedDates.length>1){
   const {person}=monthlySelectedState,type=$('monthlyStateType').value;
-  if(!MONTHLY_BATCH_TYPES.has(type))return $('monthlyStateMessage').textContent='Esta situación debe asignarse día a día. La selección múltiple solo permite permisos, comisiones, bajas y otras situaciones administrativas sin saldo.';
+  if(!MONTHLY_BATCH_TYPES.has(type))return $('monthlyStateMessage').textContent='Esta situación debe asignarse día a día. En selección múltiple se permiten estados administrativos y «Sin registro», sin modificar guardias ni saldos.';
   const datesToSave=[...monthlySelectedDates].sort();
-  if(!confirm('¿Aplicar «'+(SITUATION_LABELS[type]||type)+'» a '+person.fullName+' en '+datesToSave.length+' días?'))return;
+  if(!confirm(type===''?'¿Quitar los estados administrativos de '+datesToSave.length+' días de '+(person.fullName||person.email)+'? Los fichajes de trabajadores, guardias y saldos quedan protegidos.':'¿Aplicar «'+(SITUATION_LABELS[type]||type)+'» a '+(person.fullName||person.email)+' en '+datesToSave.length+' días?'))return;
   const endSave=beginMonthlySave('Comprobando las fechas antes de guardar…');
   try{
    const refs=datesToSave.map(d=>({date:d,sit:doc(db,'presenceSituations',person.id+'_'+d),attendance:doc(db,'attendance',person.id+'_'+d),guard:doc(db,'guardDuties',person.id+'_'+d)}));
    // La transacción valida el conjunto completo antes de modificar ningún día.
    await runTransaction(db,async tx=>{
-    const docs=await Promise.all(refs.map(async x=>({date:x.date,a:await tx.get(x.attendance),g:await tx.get(x.guard),s:await tx.get(x.sit),ref:x.sit})));
+    const docs=await Promise.all(refs.map(async x=>({date:x.date,a:await tx.get(x.attendance),g:await tx.get(x.guard),s:await tx.get(x.sit),sitRef:x.sit,attRef:x.attendance})));
     for(const d of docs){
-     if(d.a.exists())throw Error('El '+d.date+' tiene un fichaje (manual o del trabajador). No se modificó ninguna fecha.');
-     if(d.g.exists())throw Error('El '+d.date+' tiene una guardia. No se modificó ninguna fecha.');
-     if(d.s.exists()&&['saliente_guardia','dia_agraciable'].includes(d.s.data().type))throw Error('El '+d.date+' consume un saldo. Modifícalo individualmente.');
+     // La presencia manual puede corregirse, pero nunca el fichaje original del trabajador.
+     if(d.a.exists() && (type!=='' || d.a.data().source!=='admin'))throw Error('El '+d.date+' tiene un fichaje que no puede modificarse en bloque. No se modificó ninguna fecha.');
+     if(d.g.exists())throw Error('El '+d.date+' tiene una guardia. Modifícala individualmente; no se cambió ninguna fecha.');
+     if(d.s.exists()&&['saliente_guardia','dia_agraciable'].includes(d.s.data().type))throw Error('El '+d.date+' consume un saldo. Modifícalo individualmente; no se cambió ninguna fecha.');
     }
-    for(const d of docs)tx.set(d.ref,{userId:person.id,workDate:d.date,type,updatedBy:auth.currentUser.uid,updatedAt:serverTimestamp()});
+    for(const d of docs){
+     if(type===''){
+      if(d.s.exists())tx.delete(d.sitRef);
+      if(d.a.exists() && d.a.data().source==='admin')tx.delete(d.attRef);
+     }else tx.set(d.sitRef,{userId:person.id,workDate:d.date,type,updatedBy:auth.currentUser.uid,updatedAt:serverTimestamp()});
+    }
    });
-   finishMonthlySave('Situación guardada para '+datesToSave.length+' días. No se han modificado guardias ni saldos.');
+   finishMonthlySave(type===''?'Estados retirados en '+datesToSave.length+' días. No se han modificado guardias ni saldos.':'Situación guardada para '+datesToSave.length+' días. No se han modificado guardias ni saldos.');
   }catch(err){$('monthlyStateMessage').textContent='No se pudo guardar ninguna fecha: '+(err.code||err.message);}
   finally{endSave();}
   return;

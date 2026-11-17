@@ -471,24 +471,6 @@ import {getFirestore,doc,getDoc,getDocs,collection,query,where,addDoc,setDoc,upd
 const firebaseConfig={apiKey:'AIzaSyAA328jFJgoKmhJc2u-4dmrvgIiDZKVJ-k',authDomain:'control-presencia-fireba-37b8e.firebaseapp.com',projectId:'control-presencia-fireba-37b8e',storageBucket:'control-presencia-fireba-37b8e.firebasestorage.app',messagingSenderId:'199352090992',appId:'1:199352090992:web:f1a2f0a342c80bc3b60fb5'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),$=id=>document.getElementById(id);
 let activeUid=null,adminReady=false,report=null,requestVersion=0;
-// V6.15.36: reunir peticiones de perfiles y dependencias hechas a la vez al entrar.
-// Cache temporal solo en memoria: no se almacena información de personal en el navegador.
-let baseAdminCache=null,baseAdminInFlight=null,baseAdminCacheTime=0;
-function invalidateAdminBaseCache(){baseAdminCache=null;baseAdminCacheTime=0;baseAdminInFlight=null;}
-function adminBaseDocs(){
- if(!adminReady)return Promise.reject(Error('Sesión de administración no disponible.'));
- const now=Date.now();
- if(baseAdminCache&&now-baseAdminCacheTime<12000)return Promise.resolve(baseAdminCache);
- if(baseAdminInFlight)return baseAdminInFlight;
- const uid=activeUid;
- const request=Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'departments'))])
-  .then(([users,deps])=>{if(!adminReady||activeUid!==uid)throw Error('La sesión ha cambiado.');
-    const result={users,deps};baseAdminCache=result;baseAdminCacheTime=Date.now();return result;});
- baseAdminInFlight=request;
- request.finally(()=>{if(baseAdminInFlight===request)baseAdminInFlight=null;}).catch(()=>{});
- return request;
-}
-
 let employee=null,employeeBusy=false,workerEpoch=0,postLogoutMessage='',workerCloseTimer=null;
 let chosenAccess=null,attemptedLoginId=null;
 const LAST_EMAIL_KEY='cp_firebase_last_email';
@@ -689,8 +671,7 @@ try{
  const attendanceQuery=query(collection(db,'attendance'),where('workDate','>=',interval.start),where('workDate','<=',interval.end));
  const situationQuery=query(collection(db,'presenceSituations'),where('workDate','>=',interval.start),where('workDate','<=',interval.end));
  const guardQuery=query(collection(db,'guardDuties'),where('workDate','>=',interval.start),where('workDate','<=',interval.end));
- const [base,attSnap,sitSnap,guardSnap]=await Promise.all([adminBaseDocs(),getDocs(attendanceQuery),getDocs(situationQuery),getDocs(guardQuery)]);
- const profilesSnap=base.users,depSnap=base.deps;
+ const [profilesSnap,depSnap,attSnap,sitSnap,guardSnap]=await Promise.all([getDocs(collection(db,'users')),getDocs(collection(db,'departments')),getDocs(attendanceQuery),getDocs(situationQuery),getDocs(guardQuery)]);
  if(activeUid!==uid||!adminReady||version!==requestVersion)return;
  const departments=depSnap.docs.map(d=>({id:d.id,name:d.data().name||d.id})).sort((a,b)=>a.name.localeCompare(b.name,'es'));
  const selected=$('deptSelect').value;
@@ -718,7 +699,7 @@ try{
  $('rows').replaceChildren();if(!rows.length){const tr=document.createElement('tr');tableCell(tr,'No hay trabajadores que coincidan con los filtros.').colSpan=5;$('rows').appendChild(tr)}
  else for(const r of rows){const tr=document.createElement('tr');tableCell(tr,r.name);tableCell(tr,r.dept);const td=document.createElement('td'),badge=document.createElement('span');badge.className='tag'+(r.hasAttendance?'':(r.status==='Sin registro'?' pending':' situ'));badge.textContent=r.status;td.appendChild(badge);tr.appendChild(td);tableCell(tr,r.time);const action=tableCell(tr,'');action.className='no-print';const edit=document.createElement('button');edit.type='button';edit.className='ghost mini';edit.textContent='Gestionar';edit.addEventListener('click',()=>editSituationRow(r));action.appendChild(edit);$('rows').appendChild(tr)}
  $('exportXlsx').disabled=false;$('printReport').disabled=false;$('exportXlsx').title='Descargar archivo Excel del período consultado';$('printReport').title='Abrir diálogo de impresión o guardar en PDF';$('actionHint').textContent='Consulta lista. Puedes descargar Excel o imprimir el informe.';status('Consulta completada. Listo para exportar a Excel o imprimir.');
-}catch(e){if(version===requestVersion){clearDashboard();status('Error al consultar Firestore: '+(e.code||'error')+' · '+e.message,true)}}finally{if(version===requestVersion){b.disabled=false;b.textContent='Consultar registros'}}}
+}catch(e){if(version===requestVersion){clearDashboard();status('Error al consultar Firestore: '+(e.code||'error')+' · '+e.message,true)}}finally{b.disabled=false;b.textContent='Consultar registros'}}
 // XLSX real, generado íntegramente en el navegador: ZIP sin compresión (STORE), sin bibliotecas externas.
 const enc=new TextEncoder();
 function crc32(bytes){let crc=0xffffffff;for(const b of bytes){crc^=b;for(let j=0;j<8;j++)crc=(crc&1)?(crc>>>1)^0xedb88320:crc>>>1}return (crc^0xffffffff)>>>0}
@@ -864,11 +845,10 @@ function renderGuardHistory(){
  r.appendChild(td);body.appendChild(r)}tab.appendChild(body);box.appendChild(tab)
 }
 async function loadGuardsData(){
- const [base,guards,grants,situations]=await Promise.all([
-  adminBaseDocs(),
+ const [profiles,deps,guards,grants,situations]=await Promise.all([
+  getDocs(collection(db,'users')),getDocs(collection(db,'departments')),
   getDocs(collection(db,'guardDuties')),getDocs(collection(db,'graciousDays')),getDocs(collection(db,'presenceSituations'))
  ]);
- const profiles=base.users,deps=base.deps;
  guardPeople=profiles.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='employee').sort((a,b)=>guardPersonName(a).localeCompare(guardPersonName(b),'es'));
  managedDeps=deps.docs.map(d=>({id:d.id,...d.data()}));
  guardRecords=guards.docs.map(d=>({id:d.id,...d.data()}));
@@ -878,8 +858,6 @@ async function loadGuardsData(){
 async function loadGuards(){
  if(!adminReady||guardLoading)return;
  guardLoading=true;const uid=activeUid;
- if(!guardPeople.length){const body=$('guardRows');body.replaceChildren();const row=document.createElement('tr');tableCell(row,'Cargando personal y saldos…').colSpan=4;body.appendChild(row);}
- guardError('guardMessage','Consultando guardias y días pendientes…');
  try{await loadGuardsData();if(!adminReady||activeUid!==uid)return;
   if(guardSelected&&!guardPeople.some(p=>p.id===guardSelected&&p.active===true))guardSelected='';
   guardOptions();renderGuardList();renderGuardHistory();
@@ -1333,8 +1311,7 @@ async function refreshMonthly(confirmedSaveMessage=null){
  $('monthlyReload').disabled=true;$('monthlyStatus').textContent=confirmedSaveMessage?confirmedSaveMessage+' Actualizando la vista…':'Consultando trabajadores y estados del mes…';
  try{
   const between=collectionName=>getDocs(query(collection(db,collectionName),where('workDate','>=',start),where('workDate','<=',end)));
-  const [base,attendance,situations,guards,grants]=await Promise.all([adminBaseDocs(),between('attendance'),between('presenceSituations'),between('guardDuties'),between('graciousDays')]);
-  const users=base.users;
+  const [users,attendance,situations,guards,grants]=await Promise.all([getDocs(collection(db,'users')),between('attendance'),between('presenceSituations'),between('guardDuties'),between('graciousDays')]);
   if(version!==monthlyVersion||uid!==activeUid||!adminReady||currentSection!=='monthly')return;
   const workers=users.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='employee'&&p.active===true).sort(compareWorkerOrder);
   monthlyWorkersCache=workers;
@@ -1370,13 +1347,13 @@ function showSection(section){if(!adminReady)return;currentSection=section;$('re
 for(const [id,value] of [['tabReports','reports'],['tabDepartments','departments'],['tabStaff','staff'],['tabGuards','guards'],['tabMonthly','monthly']])$(id).addEventListener('click',()=>showSection(value));
 function statusNode(active){const e=document.createElement('span');e.className='state'+(active===true?'':' off');e.textContent=active===true?'Activa/o':'Inactiva/o';return e}
 function optionsStaffDepartments(){const sel=$('staffDept'),v=sel.value;sel.replaceChildren();const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Selecciona una dependencia';sel.appendChild(placeholder);for(const dep of managedDeps){const opt=document.createElement('option');opt.value=dep.id;opt.textContent=dep.name+(dep.active===true?'':' (inactiva)');sel.appendChild(opt)}sel.value=managedDeps.some(d=>d.id===v)?v:''}
-function renderDepartmentList(){const body=$('deptRows');body.replaceChildren();if(!managedDeps.length){const r=document.createElement('tr');tableCell(r,'No hay dependencias.').colSpan=3;body.appendChild(r)}for(const d of managedDeps.filter(d=>d.active===true||$('showRetiredDeps').checked)){const r=document.createElement('tr');tableCell(r,d.name);const s=document.createElement('td');s.appendChild(statusNode(d.active));r.appendChild(s);const td=document.createElement('td');const b=document.createElement('button');b.className='ghost mini';b.type='button';b.textContent='Editar';b.addEventListener('click',()=>{$('deptEditId').value=d.id;$('deptName').value=d.name;$('deptActive').checked=d.active===true;$('deptName').focus();displayManagerMessage('deptMessage','Editando '+d.name)});td.appendChild(b);const x=document.createElement('button');x.type='button';x.className=d.active===true?'danger-icon':'ghost mini';x.textContent=d.active===true?'×':'Restaurar';x.title=d.active===true?'Retirar dependencia':'Restaurar dependencia';x.setAttribute('aria-label',x.title);x.addEventListener('click',async()=>{const linked=managedStaff.filter(p=>p.departmentId===d.id&&p.active===true);if(d.active===true&&linked.length){displayManagerMessage('deptMessage','No puedes retirar esta dependencia: tiene '+linked.length+' trabajador(es) activo(s). Reasígnalos o retíralos primero.',true);return}if(!confirm(d.active===true?'¿Retirar «'+d.name+'»? Desaparecerá del listado activo, conservando su historial.':'¿Restaurar «'+d.name+'»?'))return; x.disabled=true;try{await updateDoc(doc(db,'departments',d.id),{active:d.active!==true});invalidateAdminBaseCache();await loadManagement();clearDashboard();displayManagerMessage('deptMessage',d.active===true?'Dependencia retirada.':'Dependencia restaurada.')}catch(e){displayManagerMessage('deptMessage','No se pudo cambiar el estado: '+(e.code||e.message),true)}finally{x.disabled=false}});td.appendChild(x);r.appendChild(td);body.appendChild(r)}}
-function renderStaffList(){const body=$('staffRows');body.replaceChildren();if(!managedStaff.length){const r=document.createElement('tr');tableCell(r,'No hay trabajadores.').colSpan=4;body.appendChild(r)}const deptMap=new Map(managedDeps.map(d=>[d.id,d.name]));for(const p of managedStaff.filter(p=>p.active===true)){const r=document.createElement('tr');tableCell(r,p.fullName||p.email||p.id);tableCell(r,deptMap.get(p.departmentId)||'Sin asignar');const td=document.createElement('td');td.appendChild(statusNode(p.active));r.appendChild(td);const action=document.createElement('td'),b=document.createElement('button');b.className='ghost mini';b.type='button';b.textContent='Editar';b.addEventListener('click',()=>{$('staffUid').value=p.id;$('newCredentials').classList.add('hidden');$('staffModeLabel').textContent='Editando ficha existente';$('staffSave').textContent='Guardar cambios';$('staffName').value=p.fullName||'';$('staffEmail').value=p.email||'';$('staffEmail').readOnly=false;$('staffDept').value=p.departmentId||'';$('staffActive').checked=p.active===true;$('staffName').focus();displayManagerMessage('staffMessage','Editando '+(p.fullName||p.email))});action.appendChild(b);const x=document.createElement('button');x.type='button';x.className=p.active===true?'danger-icon':'ghost mini';x.textContent=p.active===true?'×':'Restaurar';x.title=p.active===true?'Retirar trabajador':'Restaurar trabajador';x.setAttribute('aria-label',x.title);x.addEventListener('click',async()=>{if(p.active!==true&&!managedDeps.some(d=>d.id===p.departmentId&&d.active===true)){displayManagerMessage('staffMessage','Asigna primero una dependencia activa para restaurar a esta persona.',true);return}if(!confirm(p.active===true?'¿Retirar a «'+(p.fullName||p.email)+'»? No podrá volver a fichar, pero se conservará el historial.':'¿Restaurar a «'+(p.fullName||p.email)+'»?'))return;x.disabled=true;try{await updateDoc(doc(db,'users',p.id),{active:p.active!==true});invalidateAdminBaseCache();await loadManagement();clearDashboard();displayManagerMessage('staffMessage',p.active===true?'Trabajador retirado.':'Trabajador restaurado.')}catch(e){displayManagerMessage('staffMessage','No se pudo cambiar el estado: '+(e.code||e.message),true)}finally{x.disabled=false}});action.appendChild(x);r.appendChild(action);body.appendChild(r)}}
-async function loadManagement(){if(!adminReady)return;const uid=activeUid;try{const base=await adminBaseDocs(),d=base.deps,u=base.users;if(!adminReady||activeUid!==uid)return;managedDeps=d.docs.map(doc=>({id:doc.id,...doc.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','es'));managedStaff=u.docs.map(doc=>({id:doc.id,...doc.data()})).filter(p=>p.role==='employee').sort((a,b)=>(a.fullName||'').localeCompare(b.fullName||'','es'));renderDepartmentList();optionsStaffDepartments();renderStaffList()}catch(e){displayManagerMessage(currentSection==='departments'?'deptMessage':'staffMessage','No se pudieron cargar los datos: '+(e.code||e.message),true)}}
+function renderDepartmentList(){const body=$('deptRows');body.replaceChildren();if(!managedDeps.length){const r=document.createElement('tr');tableCell(r,'No hay dependencias.').colSpan=3;body.appendChild(r)}for(const d of managedDeps.filter(d=>d.active===true||$('showRetiredDeps').checked)){const r=document.createElement('tr');tableCell(r,d.name);const s=document.createElement('td');s.appendChild(statusNode(d.active));r.appendChild(s);const td=document.createElement('td');const b=document.createElement('button');b.className='ghost mini';b.type='button';b.textContent='Editar';b.addEventListener('click',()=>{$('deptEditId').value=d.id;$('deptName').value=d.name;$('deptActive').checked=d.active===true;$('deptName').focus();displayManagerMessage('deptMessage','Editando '+d.name)});td.appendChild(b);const x=document.createElement('button');x.type='button';x.className=d.active===true?'danger-icon':'ghost mini';x.textContent=d.active===true?'×':'Restaurar';x.title=d.active===true?'Retirar dependencia':'Restaurar dependencia';x.setAttribute('aria-label',x.title);x.addEventListener('click',async()=>{const linked=managedStaff.filter(p=>p.departmentId===d.id&&p.active===true);if(d.active===true&&linked.length){displayManagerMessage('deptMessage','No puedes retirar esta dependencia: tiene '+linked.length+' trabajador(es) activo(s). Reasígnalos o retíralos primero.',true);return}if(!confirm(d.active===true?'¿Retirar «'+d.name+'»? Desaparecerá del listado activo, conservando su historial.':'¿Restaurar «'+d.name+'»?'))return; x.disabled=true;try{await updateDoc(doc(db,'departments',d.id),{active:d.active!==true});await loadManagement();clearDashboard();displayManagerMessage('deptMessage',d.active===true?'Dependencia retirada.':'Dependencia restaurada.')}catch(e){displayManagerMessage('deptMessage','No se pudo cambiar el estado: '+(e.code||e.message),true)}finally{x.disabled=false}});td.appendChild(x);r.appendChild(td);body.appendChild(r)}}
+function renderStaffList(){const body=$('staffRows');body.replaceChildren();if(!managedStaff.length){const r=document.createElement('tr');tableCell(r,'No hay trabajadores.').colSpan=4;body.appendChild(r)}const deptMap=new Map(managedDeps.map(d=>[d.id,d.name]));for(const p of managedStaff.filter(p=>p.active===true)){const r=document.createElement('tr');tableCell(r,p.fullName||p.email||p.id);tableCell(r,deptMap.get(p.departmentId)||'Sin asignar');const td=document.createElement('td');td.appendChild(statusNode(p.active));r.appendChild(td);const action=document.createElement('td'),b=document.createElement('button');b.className='ghost mini';b.type='button';b.textContent='Editar';b.addEventListener('click',()=>{$('staffUid').value=p.id;$('newCredentials').classList.add('hidden');$('staffModeLabel').textContent='Editando ficha existente';$('staffSave').textContent='Guardar cambios';$('staffName').value=p.fullName||'';$('staffEmail').value=p.email||'';$('staffEmail').readOnly=false;$('staffDept').value=p.departmentId||'';$('staffActive').checked=p.active===true;$('staffName').focus();displayManagerMessage('staffMessage','Editando '+(p.fullName||p.email))});action.appendChild(b);const x=document.createElement('button');x.type='button';x.className=p.active===true?'danger-icon':'ghost mini';x.textContent=p.active===true?'×':'Restaurar';x.title=p.active===true?'Retirar trabajador':'Restaurar trabajador';x.setAttribute('aria-label',x.title);x.addEventListener('click',async()=>{if(p.active!==true&&!managedDeps.some(d=>d.id===p.departmentId&&d.active===true)){displayManagerMessage('staffMessage','Asigna primero una dependencia activa para restaurar a esta persona.',true);return}if(!confirm(p.active===true?'¿Retirar a «'+(p.fullName||p.email)+'»? No podrá volver a fichar, pero se conservará el historial.':'¿Restaurar a «'+(p.fullName||p.email)+'»?'))return;x.disabled=true;try{await updateDoc(doc(db,'users',p.id),{active:p.active!==true});await loadManagement();clearDashboard();displayManagerMessage('staffMessage',p.active===true?'Trabajador retirado.':'Trabajador restaurado.')}catch(e){displayManagerMessage('staffMessage','No se pudo cambiar el estado: '+(e.code||e.message),true)}finally{x.disabled=false}});action.appendChild(x);r.appendChild(action);body.appendChild(r)}}
+async function loadManagement(){if(!adminReady)return;const uid=activeUid;try{const [d,u]=await Promise.all([getDocs(collection(db,'departments')),getDocs(collection(db,'users'))]);if(!adminReady||activeUid!==uid)return;managedDeps=d.docs.map(doc=>({id:doc.id,...doc.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','es'));managedStaff=u.docs.map(doc=>({id:doc.id,...doc.data()})).filter(p=>p.role==='employee').sort((a,b)=>(a.fullName||'').localeCompare(b.fullName||'','es'));renderDepartmentList();optionsStaffDepartments();renderStaffList()}catch(e){displayManagerMessage(currentSection==='departments'?'deptMessage':'staffMessage','No se pudieron cargar los datos: '+(e.code||e.message),true)}}
 function resetDeptForm(){$('deptForm').reset();$('deptEditId').value='';$('deptActive').checked=true;displayManagerMessage('deptMessage','')}
 function resetStaffForm(){$('staffForm').reset();$('staffUid').value='';$('staffActive').checked=true;$('staffEmail').readOnly=false;$('newCredentials').classList.remove('hidden');$('staffModeLabel').textContent='Nuevo trabajador · Alta de cuenta y ficha';$('staffSave').textContent='Crear trabajador';displayManagerMessage('staffMessage','')}
 $('showRetiredDeps').addEventListener('change',renderDepartmentList);$('deptCancel').addEventListener('click',resetDeptForm);$('staffCancel').addEventListener('click',resetStaffForm);$('deptReload').addEventListener('click',loadManagement);$('staffReload').addEventListener('click',loadManagement);
-$('deptForm').addEventListener('submit',async e=>{e.preventDefault();if(!adminReady)return;const name=$('deptName').value.trim(),id=$('deptEditId').value,active=$('deptActive').checked;if(!name||name.length>100)return displayManagerMessage('deptMessage','Nombre inválido.',true);const b=$('deptSave');b.disabled=true;try{if(id)await updateDoc(doc(db,'departments',id),{name,active});else await addDoc(collection(db,'departments'),{name,active,createdAt:serverTimestamp()});resetDeptForm();displayManagerMessage('deptMessage','Dependencia guardada.');invalidateAdminBaseCache();await loadManagement();clearDashboard()}catch(err){displayManagerMessage('deptMessage','Error al guardar: '+(err.code||err.message),true)}finally{b.disabled=false}});
+$('deptForm').addEventListener('submit',async e=>{e.preventDefault();if(!adminReady)return;const name=$('deptName').value.trim(),id=$('deptEditId').value,active=$('deptActive').checked;if(!name||name.length>100)return displayManagerMessage('deptMessage','Nombre inválido.',true);const b=$('deptSave');b.disabled=true;try{if(id)await updateDoc(doc(db,'departments',id),{name,active});else await addDoc(collection(db,'departments'),{name,active,createdAt:serverTimestamp()});resetDeptForm();displayManagerMessage('deptMessage','Dependencia guardada.');await loadManagement();clearDashboard()}catch(err){displayManagerMessage('deptMessage','Error al guardar: '+(err.code||err.message),true)}finally{b.disabled=false}});
 
 $('staffForm').addEventListener('submit',async e=>{
   e.preventDefault();if(!adminReady||!auth.currentUser)return;
@@ -1433,7 +1410,7 @@ $('staffForm').addEventListener('submit',async e=>{
       displayManagerMessage('staffMessage','Cuenta y ficha creadas correctamente. Ya puede iniciar sesión el trabajador.');
     }
     $('staffForm').reset();$('staffUid').value='';$('newCredentials').classList.remove('hidden');$('staffEmail').readOnly=false;$('staffModeLabel').textContent='Nuevo trabajador · Alta de cuenta y ficha';$('staffSave').textContent='Crear trabajador';$('staffActive').checked=true;
-    invalidateAdminBaseCache();await loadManagement();clearDashboard();
+    await loadManagement();clearDashboard();
   }catch(err){displayManagerMessage('staffMessage','No se pudieron guardar los cambios: '+(err.code||err.message)+(err.code==='permission-denied'?' (revisa la regla loginAliases de Firestore).':''),true)}
   finally{b.disabled=false;$('staffPassword').value=''}
 });
@@ -1536,7 +1513,7 @@ function startLiveAttendance(uid){
  liveStatus('● Conectando avisos de fichajes…');
  const currentDay=liveAttendanceDay;
  // Solo se leen nombres de las personas autenticadas como administrador.
- adminBaseDocs().then(({users:snap})=>{
+ getDocs(collection(db,'users')).then(snap=>{
   if(!adminReady||activeUid!==uid||liveAttendanceDay!==currentDay)return;
   liveAttendanceNames=new Map(snap.docs.map(d=>[d.id,d.data().fullName||d.data().email||'Trabajador']));
  }).catch(()=>{});
@@ -1592,7 +1569,7 @@ onAuthStateChanged(auth,async user=>{
  if(workerCloseTimer!==null){clearInterval(workerCloseTimer);workerCloseTimer=null;}
  const uid=user?.uid||null,epoch=++workerEpoch;
  stopLiveAttendance();
- activeUid=uid;adminReady=false;invalidateAdminBaseCache();employee=null;employeeBusy=false;workerReady(false);
+ activeUid=uid;adminReady=false;employee=null;employeeBusy=false;workerReady(false);
  ++requestVersion;clearDashboard();currentSection='reports';
  $('reportsView').classList.remove('hidden');$('manageDepartments').classList.add('hidden');$('manageStaff').classList.add('hidden');$('manageGuards').classList.add('hidden');$('monthlyView').classList.add('hidden');
  $('dashboard').classList.add('hidden');$('workerView').classList.add('hidden');
@@ -1610,8 +1587,6 @@ onAuthStateChanged(auth,async user=>{
    if(admin.exists()&&admin.data().active===true){
      if(chosenAccess==='worker'){postLogoutMessage='Esta cuenta es de administrador. Selecciona «Administrador» para entrar.';await signOut(auth);return;}
      adminReady=true;$('login').classList.add('hidden');$('dashboard').classList.remove('hidden');$('adminEmail').textContent=user.email||'';
-     // Precarga compartida de personal y dependencias; las otras pestañas reutilizan la misma petición.
-     adminBaseDocs().catch(()=>{});
      startLiveAttendance(uid);
      await refresh();return;
    }
